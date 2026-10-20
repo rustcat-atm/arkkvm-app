@@ -29,8 +29,20 @@ fn main() {
     let buildkit_sysroot =
         format!("{}/arm-rockchip830-linux-uclibcgnueabihf/sysroot", buildkit_root);
 
-    // Tell cargo to look for shared libraries in the specified directory
-    println!("cargo:rustc-link-search=/usr/lib");
+    // The vendor .so files live in the cross sysroot, not on the build host.
+    //
+    // This used to read `cargo:rustc-link-search=/usr/lib`, which is the
+    // path they occupy *on the device*. As a link-time search path it points
+    // at the build machine instead, and whether that is harmless depends
+    // entirely on the distro: Debian-family hosts keep 64-bit libraries in
+    // /usr/lib/<triple>/, so /usr/lib holds nothing the cross-linker would
+    // take. On a distro where /usr/lib IS the 64-bit libdir (Arch, among
+    // others) the linker finds the host's x86-64 libgcc_s.so.1 and stops:
+    //
+    //     /usr/lib/libgcc_s.so.1: file not recognized: file format not recognized
+    //
+    // Point at the sysroot, which is correct on every host.
+    println!("cargo:rustc-link-search={}/usr/lib", buildkit_sysroot);
     println!("cargo:rustc-link-lib=rockit");
     println!("cargo:rustc-link-lib=rockchip_mpp");
     println!("cargo:rustc-link-lib=rga");
