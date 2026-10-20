@@ -551,8 +551,11 @@ impl VideoBuffer {
 /// Note: On 32-bit architectures, c_ulong is u32 and can be used directly
 /// On 64-bit architectures, c_ulong is u64, but ioctl's request parameter is still u32
 fn v4l2_ioctl(fd: RawFd, request: c_ulong, arg: *mut c_void) -> c_int {
-    // Ensure request value is within u32 range (ioctl's request parameter is always u32)
-    unsafe { ioctl(fd, request as u32, arg) }
+    // ⛔ `as _`, not `as u32`. libc spells ioctl's request parameter differently per target —
+    // u32 on 32-bit uclibc (the device), c_ulong on 64-bit glibc (a developer's host) — so a
+    // hard-coded `as u32` is correct for the device and the ONLY type error left when
+    // typechecking this crate on a laptop. Letting inference pick is right on both.
+    unsafe { ioctl(fd, request as _, arg) }
 }
 
 /// Query digital video timings (safe wrapper around VIDIOC_QUERY_DV_TIMINGS)
