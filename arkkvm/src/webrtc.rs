@@ -131,6 +131,10 @@ pub(crate) async fn remove_and_close_session(
     app_state: &crate::state::AppState,
     session_id: &str,
 ) -> bool {
+    // ⛔ Every teardown path runs through here, so this is where a lease held by a WebRTC
+    // client is given back. Releasing it in the handlers instead would mean ten call sites
+    // and nine chances to forget.
+    crate::leases::session_ended(session_id).await;
     let Some(session) = app_state.remove_session(session_id).await else {
         return false;
     };
@@ -919,6 +923,13 @@ pub async fn handle_session_takeover(
         .await;
         previous
     };
+
+    // The holder is now this session; keep its lease alive for as long as it lives.
+    if let Some(tok) = lease
+        && crate::leases::holds_now(tok).await
+    {
+        crate::leases::bind_to_session(&new_session_id, tok).await;
+    }
 
     if let Some(old_session) = maybe_old
         && !Arc::ptr_eq(&old_session, &new_session)

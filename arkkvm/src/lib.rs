@@ -18,6 +18,7 @@ pub mod leases;
 pub mod module;
 pub mod ota;
 pub mod remote_mount;
+pub mod apidoc;
 pub mod screen;
 pub mod vmedia;
 pub mod services;

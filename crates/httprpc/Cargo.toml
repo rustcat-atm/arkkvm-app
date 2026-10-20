@@ -14,3 +14,6 @@ tracing = "0.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+# `oapi` only for the test that proves a plain Handler can be documented. The firmware
+# already builds salvo with this feature, so it costs the device nothing.
+salvo = { version = "0.84", features = ["oapi"] }

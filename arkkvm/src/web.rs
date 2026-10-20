@@ -1794,11 +1794,34 @@ async fn handle_webrtc_websocket_message(
                                         return Err(anyhow::anyhow!("Failed to send answer"));
                                     }
 
+                                    let lease = parsed.get("lease").and_then(|v| v.as_str());
+
+                                    // ⛔ ASK BEFORE TAKING, PURELY SO WE CAN EXPLAIN.
+                                    //
+                                    // The authoritative check is inside handle_session_takeover
+                                    // and stays there. But on this path its refusal arrives as
+                                    // an error that `?` turns into a dropped websocket, and a
+                                    // socket that simply dies tells the user nothing -- not that
+                                    // the device is held, not by whom, not that they can take it.
+                                    // So ask first and answer in a message the UI can render.
+                                    if let Err(why) = crate::leases::may_drive(lease).await {
+                                        let msg = serde_json::json!({
+                                            "type": "leaseRefused", "data": why,
+                                        });
+                                        let _ = ws.send(Message::text(msg.to_string())).await;
+                                        crate::webrtc::remove_and_close_session(
+                                            app_state,
+                                            connection_id,
+                                        )
+                                        .await;
+                                        return Ok(false);
+                                    }
+
                                     // Takeover: make this the current session, close the previous after 1s
                                     crate::webrtc::handle_session_takeover(
                                         app_state.clone(),
                                         session.clone(),
-                                        parsed.get("lease").and_then(|v| v.as_str()),
+                                        lease,
                                     )
                                     .await?;
                                 }
