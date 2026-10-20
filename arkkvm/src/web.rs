@@ -333,10 +333,28 @@ async fn init_protected_routes() -> anyhow::Result<Router> {
         // ⛔ The HTTP control plane. Same auth and CSRF hoops as every other protected route,
         // and the same RPC registry as the WebRTC data channel — a one-shot command should
         // not require negotiating ICE and decoding H.264 just to ask whether the host is on.
-        .push(Router::with_path("/api/rpc")
-            .post(httprpc::HttpRpc(crate::httprpc_adapter::RegistryDispatch::shared())))
+        .push(Router::new()
+            // ⛔ Everything that can CHANGE the device sits under this hoop. Adding a route
+            // here inherits the lease check; adding one outside is a visible decision.
+            .hoop(crate::leases::LeaseGuard)
+            .push(Router::with_path("/api/rpc")
+                .post(httprpc::HttpRpc(crate::httprpc_adapter::RegistryDispatch::shared())))
+            .push(Router::with_path("/redfish/v1/Systems/0/Actions/ComputerSystem.Reset")
+                .post(redfish::Reset(crate::httprpc_adapter::RegistryDispatch::shared()))))
         .push(Router::with_path("/api/capabilities")
-            .get(httprpc::Capabilities(crate::httprpc_adapter::RegistryDispatch::shared())));
+            .get(httprpc::Capabilities(crate::httprpc_adapter::RegistryDispatch::shared())))
+        // Control leases. Taking the device from someone becomes a decision with a reason
+        // attached, instead of a side effect of connecting.
+        .push(Router::with_path("/api/session").get(crate::leases::Status)
+                                               .post(crate::leases::Acquire)
+                                               .delete(crate::leases::Release))
+        .push(Router::with_path("/api/session/renew").post(crate::leases::Renew))
+        // Redfish: power and virtual media only, but it is the one standard here — iDRAC,
+        // iLO and Supermicro speak it, so existing BMC tooling works with no driver at all.
+        .push(Router::with_path("/redfish/v1").get(redfish::ServiceRoot))
+        .push(Router::with_path("/redfish/v1/Systems").get(redfish::SystemsCollection))
+        .push(Router::with_path("/redfish/v1/Systems/0")
+            .get(redfish::System(crate::httprpc_adapter::RegistryDispatch::shared())));
     Ok(router)
 }
 

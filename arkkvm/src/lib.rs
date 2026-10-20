@@ -14,6 +14,7 @@ pub mod config;
 pub mod hardware;
 pub mod httprpc_adapter;
 pub mod jsonrpc;
+pub mod leases;
 pub mod module;
 pub mod ota;
 pub mod remote_mount;

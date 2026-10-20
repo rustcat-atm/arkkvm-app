@@ -60,6 +60,8 @@ futures = { version = "0.3.31", default-features = false }
 futures-util = { version = "0.3.31", default-features = false }
 httpdate = "1.0.3"
 httprpc = { path = "../crates/httprpc" }
+redfish = { path = "../crates/redfish" }
+sessionlease = { path = "../crates/sessionlease" }
 if-addrs = "0.14.0"
 libc = { version = "0.2.175", default-features = false }
 macaddr = { version = "1.0.1", default-features = false }

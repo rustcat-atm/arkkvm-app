@@ -163,6 +163,7 @@ dependencies = [
  "rand 0.9.2",
  "rand_core 0.6.4",
  "rcgen 0.14.5",
+ "redfish",
  "regex",
  "reqwest",
  "rockchip_mpi_sys",
@@ -173,6 +174,7 @@ dependencies = [
  "salvo",
  "serde",
  "serde_json",
+ "sessionlease",
  "socketioxide",
  "tempfile",
  "time 0.3.44",
@@ -3588,6 +3590,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "redfish"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "httprpc",
+ "salvo",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "redox_syscall"
 version = "0.5.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4555,6 +4569,14 @@ dependencies = [
  "scopeguard",
  "unescaper",
  "winapi",
+]
+
+[[package]]
+name = "sessionlease"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

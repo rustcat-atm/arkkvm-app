@@ -1,0 +1,10 @@
+[package]
+name = "sessionlease"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-2.0-or-later"
+description = "Explicit, expiring control leases — so taking the device from someone is a decision, not a side effect"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
