@@ -1,6 +1,29 @@
 use std::env;
 use std::path::PathBuf;
 
+/// Clang's triple parser rejects the `uclibceabihf` environment outright:
+///
+///     error: version 'uclibceabihf' in target triple
+///            'armv7-unknown-linux-uclibceabihf' is invalid
+///
+/// bindgen forwards cargo's `TARGET` to libclang as `--target`, so every
+/// header parse dies before it reads a line. Clang understands the
+/// `gnueabihf` spelling, and for *parsing C headers* the two are the same
+/// machine: 32-bit ARMv7, hard-float PCS, identical type sizes. The libc
+/// difference does not leak in, because the headers themselves come from
+/// `--sysroot`, which points at the uClibc sysroot either way.
+///
+/// Only the spelling handed to clang changes. The Rust target, the linker
+/// and the libraries are untouched.
+fn clang_target(target: &str) -> Option<String> {
+    if !target.contains("uclibc") {
+        return None; // clang already understands this triple
+    }
+    // One substitution covers every spelling, and cannot quietly no-op:
+    //   uclibceabihf -> gnueabihf,  uclibceabi -> gnueabi,  uclibc -> gnu
+    Some(target.replace("uclibc", "gnu"))
+}
+
 fn main() {
     let buildkit_root = env::var("BUILDKIT_ROOT").expect("BUILDKIT_ROOT not set");
     let buildkit_sysroot =
@@ -17,7 +40,14 @@ fn main() {
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for
     // the resulting bindings.
-    let bindings = bindgen::Builder::default()
+    // See `clang_target` above: clang cannot parse the uclibc triple at all.
+    let target = env::var("TARGET").unwrap_or_default();
+    let mut builder = bindgen::Builder::default();
+    if let Some(t) = clang_target(&target) {
+        builder = builder.clang_arg(format!("--target={}", t));
+    }
+
+    let bindings = builder
         .header("wrapper.h")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .clang_arg(format!("--sysroot={}", buildkit_sysroot))
