@@ -162,16 +162,30 @@ pub async fn get_file_transfer_state() -> Result<FileTransferState> {
 
 /// Mount remote HTTP image via NBD and point mass storage to /dev/nbd0.
 pub async fn mount_with_http(url: &str, mode: VirtualMediaMode) -> Result<()> {
-    ensure_images_folder().await?;
-    set_mass_storage_mode(mode == VirtualMediaMode::CDROM, true, UsbTarget::Usb0Lun0).await?;
+    // ⛔ VALIDATE, THEN MUTATE.
+    //
+    // `set_mass_storage_mode` used to run first, so an insert that was going to be rejected --
+    // media already mounted, bad scheme, host unreachable, HEAD timing out after 45s -- had
+    // already reconfigured the USB gadget. The caller got an error back and the device was
+    // left in a state nobody asked for. Everything that can fail without touching hardware
+    // now happens before anything that touches it.
+    if CURRENT_VIRTUAL_MEDIA_STATE.read().is_some() {
+        return Err(anyhow!("another virtual media is already mounted"));
+    }
 
     // Create HTTP/HTTPS reader and determine size
     let reader = HttpRangeReader::new(url)?;
     let size = reader.size()?;
     info!("using remote HTTP url: {}, size: {}", reader.url(), size);
 
+    ensure_images_folder().await?;
+    set_mass_storage_mode(mode == VirtualMediaMode::CDROM, true, UsbTarget::Usb0Lun0).await?;
+
     // Update state, then start NBD
     {
+        // Re-checked under the write lock: the read above can go stale between the two, and
+        // this is the one that decides. It is narrow enough that reaching it means two inserts
+        // raced, which the lease already makes unlikely.
         let mut st = CURRENT_VIRTUAL_MEDIA_STATE.write();
         if st.is_some() {
             return Err(anyhow!("another virtual media is already mounted"));

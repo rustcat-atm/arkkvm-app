@@ -12,6 +12,10 @@
 //! the device. That is what a lease means. The way in is `POST /api/session` with a reason,
 //! which displaces the holder and records who did it.
 
+// Error shape: these endpoints answer with a structured body rather than salvo's
+// `StatusError`, because a refusal carries who holds the device and for how long, and those
+// are fields a client acts on -- not prose. See "Errors: two shapes, on purpose" in
+// docs/HTTP_CONTROL_PLANE.md.
 use std::sync::Arc;
 
 use salvo::prelude::*;
@@ -67,65 +71,20 @@ pub fn token_of(req: &salvo::Request) -> Option<String> {
     req.header::<String>("x-arkkvm-lease")
 }
 
-/// Which WebRTC session currently holds the lease, and with which token.
+/// Keep the lease alive while the connection that holds it is alive, and give it back the
+/// moment that connection ends.
 ///
-/// ⛔ A LEASE WITH NO RENEWER IS A LEASE THAT LAPSES MID-SESSION.
-///
-/// The TTL exists so a holder that crashes does not own the device forever. Only the HTTP
-/// endpoint renews, so a scripted client is fine and an interactive one is not: a WebRTC
-/// holder presented its token once at takeover and then went quiet, so a minute later the
-/// device was free and the next connection took it. The protection evaporated for exactly
-/// the user least able to notice.
-///
-/// Raising the TTL trades one failure for another. Instead the lease follows the thing that
-/// is actually alive: while the session holds it we renew, and when the session ends we give
-/// it back. If the process dies, so does the renewer, and the TTL does its original job.
-static BOUND: std::sync::OnceLock<Arc<Mutex<Option<(String, String)>>>> =
-    std::sync::OnceLock::new();
-
-fn bound() -> Arc<Mutex<Option<(String, String)>>> {
-    BOUND.get_or_init(|| Arc::new(Mutex::new(None))).clone()
+/// The rules live in `sessionlease`, where the clock is injected and they are tested. This
+/// used to be a `tokio` task renewing every twenty seconds, which was complexity for nothing:
+/// the task only stopped when the session was reported gone, so it failed in exactly the case
+/// a TTL is meant to cover, while costing a task and a second copy of the state.
+pub async fn bind_to_session(session_id: &str, token: &str) -> bool {
+    manager().lock().await.bind(session_id, token, now_secs())
 }
 
-/// Is this token the live holder right now?
-pub async fn holds_now(token: &str) -> bool {
-    manager().lock().await.holds(token, now_secs())
-}
-
-/// Tie `token` to `session_id` and keep it renewed for as long as that session is the holder.
-pub async fn bind_to_session(session_id: &str, token: &str) {
-    *bound().lock().await = Some((session_id.to_string(), token.to_string()));
-
-    let (sid, tok) = (session_id.to_string(), token.to_string());
-    tokio::spawn(async move {
-        // A third of the TTL: two renewals may be lost before the lease is actually at risk.
-        let period = std::time::Duration::from_secs((DEFAULT_TTL_SECS / 3).max(1));
-        loop {
-            tokio::time::sleep(period).await;
-            let slot = bound();
-            let still_ours = matches!(slot.lock().await.as_ref(), Some((s, _)) if *s == sid);
-            if !still_ours {
-                return; // superseded or released; stop renewing
-            }
-            if manager().lock().await.renew(&tok, now_secs()).is_none() {
-                return; // taken over or already lapsed; nothing left to keep alive
-            }
-        }
-    });
-}
-
-/// The session ended, so the device is free again without waiting out the TTL.
+/// Called from every session teardown path; a no-op unless this session held the lease.
 pub async fn session_ended(session_id: &str) {
-    let slot = bound();
-    let mut b = slot.lock().await;
-    let Some((sid, tok)) = b.as_ref() else { return };
-    if sid != session_id {
-        return;
-    }
-    let tok = tok.clone();
-    *b = None;
-    drop(b);
-    manager().lock().await.release(&tok, now_secs());
+    manager().lock().await.unbind(session_id, now_secs());
 }
 
 #[derive(Clone)]

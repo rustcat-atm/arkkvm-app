@@ -95,13 +95,15 @@ pub enum AuditEntry {
 
 pub struct LeaseManager {
     current: Option<Lease>,
+    /// The live connection keeping `current` alive, if any. See `bind`.
+    bound: Option<String>,
     ttl_secs: u64,
     audit: VecDeque<AuditEntry>,
 }
 
 impl LeaseManager {
     pub fn new(ttl_secs: u64) -> Self {
-        Self { current: None, ttl_secs: ttl_secs.max(1), audit: VecDeque::new() }
+        Self { current: None, bound: None, ttl_secs: ttl_secs.max(1), audit: VecDeque::new() }
     }
 
     fn record(&mut self, e: AuditEntry) {
@@ -112,12 +114,21 @@ impl LeaseManager {
     }
 
     /// Drop an expired lease, recording that it lapsed rather than letting it vanish silently.
+    ///
+    /// ⛔ A BOUND LEASE DOES NOT EXPIRE. The TTL exists to free the device from a holder that
+    /// vanished. A holder with a live connection has not vanished, and renewing on a timer to
+    /// say so would be the same fact told twice -- and no safer, because a timer that only
+    /// stops when the connection is reported gone fails exactly when that report fails.
     fn reap(&mut self, now: u64) {
+        if self.bound.is_some() {
+            return;
+        }
         if let Some(l) = &self.current
             && l.expired_at(now)
         {
             let holder = l.holder.clone();
             self.current = None;
+            self.bound = None;
             self.record(AuditEntry::Expired { at: now, holder });
         }
     }
@@ -141,6 +152,7 @@ impl LeaseManager {
             None => {
                 let lease = self.mint(who, now);
                 self.current = Some(lease.clone());
+                self.bound = None;
                 self.record(AuditEntry::Granted { at: now, holder: who.to_string() });
                 Acquired::Granted { lease }
             }
@@ -156,6 +168,7 @@ impl LeaseManager {
                 let displaced = held.holder.clone();
                 let lease = self.mint(who, now);
                 self.current = Some(lease.clone());
+                self.bound = None; // the displaced holder's connection no longer protects it
                 self.record(AuditEntry::TookOver {
                     at: now, who: who.to_string(), displaced: displaced.clone(),
                     reason: reason.trim().to_string(),
@@ -186,6 +199,7 @@ impl LeaseManager {
             Some(l) if l.token == token => {
                 let holder = l.holder.clone();
                 self.current = None;
+                self.bound = None;
                 self.record(AuditEntry::Released { at: now, holder });
                 true
             }
@@ -206,6 +220,34 @@ impl LeaseManager {
 
     pub fn audit(&self) -> Vec<AuditEntry> {
         self.audit.iter().cloned().collect()
+    }
+
+    /// Tie the live lease to a connection, so it lasts as long as that connection does.
+    ///
+    /// Only the holder of `token` can bind it: otherwise any caller could pin someone else's
+    /// lease open. Returns false if that token is not the live one.
+    pub fn bind(&mut self, session_id: &str, token: &str, now: u64) -> bool {
+        self.reap(now);
+        match &self.current {
+            Some(l) if l.token == token => {
+                self.bound = Some(session_id.to_string());
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// That connection ended, so give the device back now rather than at the end of a TTL
+    /// nothing has been counting. A no-op for any session that was not the bound one, which
+    /// is what makes it safe to call from every teardown path.
+    pub fn unbind(&mut self, session_id: &str, now: u64) -> bool {
+        if self.bound.as_deref() != Some(session_id) {
+            return false;
+        }
+        self.bound = None;
+        let Some(l) = self.current.take() else { return true };
+        self.record(AuditEntry::Released { at: now, holder: l.holder });
+        true
     }
 
     pub fn ttl_secs(&self) -> u64 {

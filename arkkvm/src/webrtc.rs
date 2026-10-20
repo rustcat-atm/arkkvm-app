@@ -881,12 +881,54 @@ async fn send_ice_candidate(
     Ok(())
 }
 
+/// Why a takeover did not happen.
+///
+/// ⛔ REFUSAL IS NOT A FAULT, AND CALLERS MUST BE ABLE TO TELL.
+///
+/// This used to be a bare `anyhow::Error`, so a caller could not distinguish "someone else
+/// holds the device" from "that session is gone". The signalling path answered both by
+/// dropping the websocket, and the HTTP path stuffed the structured refusal into a message
+/// string -- `held_by` arrived as JSON nested inside JSON. The workaround was a second lease
+/// check before the call, which left a window where the lease changed between the two and the
+/// socket dropped silently anyway: the exact failure the workaround existed to remove.
+#[derive(Debug)]
+pub enum TakeoverError {
+    /// The device is leased by someone else. Carries the structured refusal to render.
+    Refused(serde_json::Value),
+    Other(anyhow::Error),
+}
+
+impl TakeoverError {
+    /// One sentence, for transports that carry a string rather than a document.
+    pub fn brief(&self) -> String {
+        match self {
+            Self::Refused(d) => d.get("error").and_then(|e| e.as_str())
+                .unwrap_or("the device is leased by another client").to_string(),
+            Self::Other(e) => e.to_string(),
+        }
+    }
+}
+
+impl std::fmt::Display for TakeoverError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.brief())
+    }
+}
+
+impl std::error::Error for TakeoverError {}
+
+impl From<anyhow::Error> for TakeoverError {
+    fn from(e: anyhow::Error) -> Self {
+        Self::Other(e)
+    }
+}
+
 /// Handle session takeover: send otherSessionConnected to old session and close it after delay
 pub async fn handle_session_takeover(
     app_state: std::sync::Arc<crate::state::AppState>,
     new_session: Arc<Session>,
     lease: Option<&str>,
-) -> anyhow::Result<()> {
+) -> Result<(), TakeoverError> {
     let new_session_id = new_session.id.clone();
 
     // ⛔ THE LEASE IS ENFORCED HERE, NOT ON THE ROUTES.
@@ -900,7 +942,7 @@ pub async fn handle_session_takeover(
     // Refusing after the offer exchange would strand the session we just built, so close it.
     if let Err(why) = crate::leases::may_drive(lease).await {
         remove_and_close_session(&app_state, &new_session_id).await;
-        return Err(anyhow::anyhow!("{why}"));
+        return Err(TakeoverError::Refused(why));
     }
     let maybe_old = {
         let _guard = MEDIA_LIFECYCLE_LOCK.lock().await;
@@ -925,9 +967,7 @@ pub async fn handle_session_takeover(
     };
 
     // The holder is now this session; keep its lease alive for as long as it lives.
-    if let Some(tok) = lease
-        && crate::leases::holds_now(tok).await
-    {
+    if let Some(tok) = lease {
         crate::leases::bind_to_session(&new_session_id, tok).await;
     }
 

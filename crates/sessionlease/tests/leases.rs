@@ -175,3 +175,69 @@ fn a_lease_token_cannot_be_derived_from_what_an_attacker_knows() {
     assert_eq!(t.len(), 32, "expected 128 bits hex-encoded");
     assert!(t.chars().all(|c| c.is_ascii_hexdigit()));
 }
+
+// --- binding a lease to a live connection -------------------------------------------------
+//
+// The TTL frees the device from a holder that vanished. An interactive holder presents its
+// token once when it connects and then says nothing for an hour, so the TTL was freeing the
+// device from someone sitting right in front of it.
+
+/// Negative control. Unbound, the lease lapses on schedule -- so the test below proves the
+/// binding did something rather than restating that 60 is less than 10_200.
+#[test]
+fn an_unbound_lease_still_lapses_on_time() {
+    let mut m = mgr();
+    let t = token_of(&m.acquire("human", 10_000, ""));
+    assert!(!m.holds(&t, 10_200), "an unbound lease must still expire");
+}
+
+#[test]
+fn a_bound_lease_outlives_its_ttl_because_the_holder_has_not_gone_anywhere() {
+    let mut m = mgr();
+    let t = token_of(&m.acquire("human", 10_000, ""));
+    assert!(m.bind("sess-1", &t, 10_000));
+    assert!(m.holds(&t, 10_200), "bound to a live connection, yet the TTL took the device");
+    assert!(m.holds(&t, 1_000_000), "still held while the connection lives");
+}
+
+#[test]
+fn the_connection_ending_frees_the_device_immediately() {
+    let mut m = mgr();
+    let t = token_of(&m.acquire("human", 10_000, ""));
+    m.bind("sess-1", &t, 10_000);
+    assert!(m.unbind("sess-1", 10_050));
+    assert!(!m.holds(&t, 10_050), "the holder is gone; waiting out a TTL serves nobody");
+    assert!(matches!(m.acquire("next", 10_051, ""), Acquired::Granted { .. }));
+    assert!(m.audit().iter().any(|e| matches!(e, AuditEntry::Released { .. })),
+            "a lease that ended with its connection left no trace");
+}
+
+#[test]
+fn another_sessions_teardown_does_not_release_my_lease() {
+    // unbind is called from every teardown path, so it must ignore sessions that never held it.
+    let mut m = mgr();
+    let t = token_of(&m.acquire("human", 10_000, ""));
+    m.bind("sess-1", &t, 10_000);
+    assert!(!m.unbind("sess-other", 10_050));
+    assert!(m.holds(&t, 10_050), "an unrelated session closing took the device away");
+}
+
+#[test]
+fn only_the_holder_can_pin_a_lease_open() {
+    // Otherwise anyone could bind someone else's lease and stop it ever lapsing.
+    let mut m = mgr();
+    let t = token_of(&m.acquire("human", 10_000, ""));
+    assert!(!m.bind("sess-1", "not-the-token", 10_000));
+    assert!(!m.holds(&t, 10_200), "a stranger's bind kept the lease alive past its TTL");
+}
+
+#[test]
+fn a_takeover_drops_the_displaced_holders_binding() {
+    // Otherwise the new holder inherits protection from a connection that is not theirs.
+    let mut m = mgr();
+    let first = token_of(&m.acquire("human", 10_000, ""));
+    m.bind("sess-1", &first, 10_000);
+    let second = token_of(&m.acquire("script", 10_010, "the box is wedged"));
+    assert!(!m.holds(&first, 10_010));
+    assert!(!m.holds(&second, 10_200), "the new lease inherited the old session's immunity");
+}
