@@ -171,3 +171,63 @@ async fn inserting_an_empty_image_is_a_400_not_a_mount_of_nothing() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(d.calls.lock().unwrap().iter().all(|(m, _)| m != "mountFile"));
 }
+
+/// ⛔ EVERY ADVERTISED LINK MUST HAVE A DOCUMENT BEHIND IT.
+///
+/// `service_root()` advertised `/redfish/v1/Managers` while nothing served it, so a client
+/// walking the links 404'd one hop in and never reached the virtual media that did exist.
+/// A dangling link is worse than an absent feature: the client finds it and trusts it.
+///
+/// This walks every `@odata.id` and action `target` the service emits and fails on any path
+/// that is not in the served set. Adding a link without routing it breaks this test; the list
+/// below is the one place to update, and it must match `init_*_routes` in `arkkvm/src/web.rs`.
+#[test]
+fn every_link_the_service_advertises_is_a_path_we_serve() {
+    const SERVED: &[&str] = &[
+        "/redfish/v1",
+        "/redfish/v1/Systems",
+        "/redfish/v1/Systems/0",
+        "/redfish/v1/Systems/0/Actions/ComputerSystem.Reset",
+        "/redfish/v1/Managers",
+        "/redfish/v1/Managers/BMC",
+        "/redfish/v1/Managers/BMC/VirtualMedia",
+        "/redfish/v1/Managers/BMC/VirtualMedia/MSD",
+        "/redfish/v1/Managers/BMC/VirtualMedia/MSD/Actions/VirtualMedia.InsertMedia",
+        "/redfish/v1/Managers/BMC/VirtualMedia/MSD/Actions/VirtualMedia.EjectMedia",
+    ];
+
+    fn links(v: &serde_json::Value, out: &mut Vec<String>) {
+        match v {
+            serde_json::Value::Object(m) => {
+                for (k, val) in m {
+                    if (k == "@odata.id" || k == "target") && let Some(s) = val.as_str() {
+                        out.push(s.to_string());
+                    }
+                    links(val, out);
+                }
+            }
+            serde_json::Value::Array(a) => a.iter().for_each(|x| links(x, out)),
+            _ => {}
+        }
+    }
+
+    let docs = [
+        redfish::service_root(),
+        redfish::systems_collection(),
+        redfish::system(Some(true)),
+        redfish::managers_collection(),
+        redfish::manager(),
+        redfish::virtual_media_collection(),
+        redfish::virtual_media(true, Some("http://example/x.iso"), true),
+    ];
+    let mut found = Vec::new();
+    for d in &docs {
+        links(d, &mut found);
+    }
+    found.sort();
+    found.dedup();
+    assert!(!found.is_empty(), "walked the documents and found no links at all");
+    for l in &found {
+        assert!(SERVED.contains(&l.as_str()), "advertised {l} but nothing serves it");
+    }
+}

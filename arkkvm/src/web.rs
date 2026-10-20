@@ -340,7 +340,14 @@ async fn init_protected_routes() -> anyhow::Result<Router> {
             .push(Router::with_path("/api/rpc")
                 .post(httprpc::HttpRpc(crate::httprpc_adapter::RegistryDispatch::shared())))
             .push(Router::with_path("/redfish/v1/Systems/0/Actions/ComputerSystem.Reset")
-                .post(redfish::Reset(crate::httprpc_adapter::RegistryDispatch::shared()))))
+                .post(redfish::Reset(crate::httprpc_adapter::RegistryDispatch::shared())))
+            // Teaching the OCR atlas is a write. It used to sit with the screen GETs under a
+            // comment about reading being non-destructive -- which was true of them, not of it.
+            .push(Router::with_path("/api/screen/ocr/learn").post(crate::screen::Learn))
+            .push(Router::with_path("/redfish/v1/Managers/BMC/VirtualMedia/MSD/Actions/VirtualMedia.InsertMedia")
+                .post(crate::vmedia::Insert))
+            .push(Router::with_path("/redfish/v1/Managers/BMC/VirtualMedia/MSD/Actions/VirtualMedia.EjectMedia")
+                .post(crate::vmedia::Eject)))
         .push(Router::with_path("/api/capabilities")
             .get(httprpc::Capabilities(crate::httprpc_adapter::RegistryDispatch::shared())))
         // Control leases. Taking the device from someone becomes a decision with a reason
@@ -353,13 +360,21 @@ async fn init_protected_routes() -> anyhow::Result<Router> {
         // lease guard: observing a machine must never be the thing that is refused.
         .push(Router::with_path("/api/screen").get(crate::screen::Status))
         .push(Router::with_path("/api/screen/ocr").get(crate::screen::Ocr))
-        .push(Router::with_path("/api/screen/ocr/learn").post(crate::screen::Learn))
+
         // Redfish: power and virtual media only, but it is the one standard here — iDRAC,
         // iLO and Supermicro speak it, so existing BMC tooling works with no driver at all.
         .push(Router::with_path("/redfish/v1").get(redfish::ServiceRoot))
         .push(Router::with_path("/redfish/v1/Systems").get(redfish::SystemsCollection))
         .push(Router::with_path("/redfish/v1/Systems/0")
-            .get(redfish::System(crate::httprpc_adapter::RegistryDispatch::shared())));
+            .get(redfish::System(crate::httprpc_adapter::RegistryDispatch::shared())))
+        // The whole chain the service root promises. A link with no document behind it is
+        // worse than an absent feature: the client finds it, follows it, and gets a 404.
+        .push(Router::with_path("/redfish/v1/Managers").get(redfish::ManagersCollection))
+        .push(Router::with_path("/redfish/v1/Managers/BMC").get(redfish::Manager))
+        .push(Router::with_path("/redfish/v1/Managers/BMC/VirtualMedia")
+            .get(redfish::VirtualMediaCollection))
+        .push(Router::with_path("/redfish/v1/Managers/BMC/VirtualMedia/MSD")
+            .get(crate::vmedia::Resource));
     Ok(router)
 }
 
@@ -1329,6 +1344,7 @@ async fn handle_webrtc_session(
     req: &mut Request,
 ) -> Result<Json<WebRTCSessionResponse>, StatusError> {
     info!("Received WebRTC session request");
+    let lease = crate::leases::token_of(req);
 
     let request: WebRTCSessionRequest = req
         .parse_json()
@@ -1364,12 +1380,11 @@ async fn handle_webrtc_session(
     let session_id = session.id.clone();
     info!("WebRTC session created successfully with id: {}", &session_id);
     // Takeover: close previous current session after 1s
-    crate::webrtc::handle_session_takeover(app_state.clone(), session.clone())
+    crate::webrtc::handle_session_takeover(app_state.clone(), session.clone(), lease.as_deref())
         .await
-        .map_err(|e| {
-            StatusError::internal_server_error()
-                .brief(format!("Failed to promote WebRTC session: {e}"))
-        })?;
+        // ⛔ 409, not 500. A refused takeover is someone else holding the device, which the
+        // caller can act on; reporting it as a server fault invites a retry loop.
+        .map_err(|e| StatusError::conflict().brief(e.to_string()))?;
 
     // app_state.add_session(session).await;
     // app_state.set_current_session_id(Some(session_id)).await;
@@ -1783,6 +1798,7 @@ async fn handle_webrtc_websocket_message(
                                     crate::webrtc::handle_session_takeover(
                                         app_state.clone(),
                                         session.clone(),
+                                        parsed.get("lease").and_then(|v| v.as_str()),
                                     )
                                     .await?;
                                 }

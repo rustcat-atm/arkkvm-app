@@ -139,12 +139,42 @@ pub async fn power(d: &dyn RpcDispatch, reset_type: &str) -> (StatusCode, Option
     }
 }
 
-pub fn virtual_media(inserted: bool, image: Option<&str>) -> Value {
+/// The chain the service root promises: Managers -> BMC -> VirtualMedia -> MSD. Every hop
+/// needs a document, or a conforming client walking the links 404s before it reaches the
+/// media. `service_root` advertised `Managers` while none of these existed.
+pub fn managers_collection() -> Value {
+    json!({
+        "@odata.id": "/redfish/v1/Managers",
+        "@odata.type": "#ManagerCollection.ManagerCollection",
+        "Name": "Manager Collection", "Members@odata.count": 1,
+        "Members": [{ "@odata.id": "/redfish/v1/Managers/BMC" }],
+    })
+}
+
+pub fn manager() -> Value {
+    json!({
+        "@odata.id": "/redfish/v1/Managers/BMC",
+        "@odata.type": "#Manager.v1_5_0.Manager",
+        "Id": "BMC", "Name": "ArkKVM", "ManagerType": "KVM",
+        "VirtualMedia": { "@odata.id": "/redfish/v1/Managers/BMC/VirtualMedia" },
+    })
+}
+
+pub fn virtual_media_collection() -> Value {
+    json!({
+        "@odata.id": "/redfish/v1/Managers/BMC/VirtualMedia",
+        "@odata.type": "#VirtualMediaCollection.VirtualMediaCollection",
+        "Name": "Virtual Media Collection", "Members@odata.count": 1,
+        "Members": [{ "@odata.id": "/redfish/v1/Managers/BMC/VirtualMedia/MSD" }],
+    })
+}
+
+pub fn virtual_media(inserted: bool, image: Option<&str>, write_protected: bool) -> Value {
     json!({
         "@odata.id": "/redfish/v1/Managers/BMC/VirtualMedia/MSD",
         "@odata.type": "#VirtualMedia.v1_3_0.VirtualMedia",
         "Id": "MSD", "Name": "Virtual Media", "MediaTypes": ["CD", "USBStick"],
-        "Inserted": inserted, "Image": image, "WriteProtected": true,
+        "Inserted": inserted, "Image": image, "WriteProtected": write_protected,
         "Actions": {
             "#VirtualMedia.InsertMedia": { "target":
                 "/redfish/v1/Managers/BMC/VirtualMedia/MSD/Actions/VirtualMedia.InsertMedia" },
@@ -191,6 +221,9 @@ macro_rules! json_handler {
 }
 json_handler!(ServiceRoot, service_root());
 json_handler!(SystemsCollection, systems_collection());
+json_handler!(ManagersCollection, managers_collection());
+json_handler!(Manager, manager());
+json_handler!(VirtualMediaCollection, virtual_media_collection());
 
 #[derive(Clone)]
 pub struct System(pub Arc<dyn RpcDispatch>);
