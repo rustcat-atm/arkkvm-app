@@ -163,7 +163,11 @@ async fn capabilities_are_derived_from_the_registry_not_remembered() {
     // defended the stale answer instead of catching it. Flags derived from the RPC method
     // list cannot see HTTP-only features, so they must be reviewed when one is added.
     assert_eq!(caps["capabilities"]["ocr"], json!(true));
+    assert_eq!(caps["capabilities"]["virtual_media_redfish"], json!(true));
     assert_eq!(caps["transport"]["http"], json!("/api/rpc"));
+    // A lease nobody can discover is a lease nobody takes.
+    assert_eq!(caps["transport"]["lease"], json!("/api/session"));
+    assert_eq!(caps["transport"]["redfish"], json!("/redfish/v1"));
 }
 
 #[tokio::test]
