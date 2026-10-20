@@ -168,14 +168,22 @@ pub fn capabilities(methods: &[String]) -> Value {
     let set: BTreeSet<&str> = methods.iter().map(|s| s.as_str()).collect();
     json!({
         "jsonrpc": JSONRPC_VERSION,
-        "transport": { "http": "/api/rpc", "webrtc_datachannel": true },
+        // ⛔ Discovery is a contract. A client that asks what this device can do and is told
+        // the wrong answer will not ask twice, so anything served belongs here.
+        "transport": {
+            "http": "/api/rpc", "webrtc_datachannel": true,
+            "lease": "/api/session", "redfish": "/redfish/v1",
+        },
         "capabilities": {
             "power":       have("setATXPowerAction"),
             "power_state": set.iter().any(|m| m.to_ascii_lowercase().contains("powerled")),
             "hid":         have("sendKeys"),
             "screen":      have("getSnapshot"),
-            "ocr":         false,
+            // Served at /api/screen/ocr, on-device, not an RPC method -- which is why
+            // deriving it from the method list reported `false` while it worked.
+            "ocr":         true,
             "media":       have("mountFile") || have("getVirtualMediaList"),
+            "virtual_media_redfish": true,
             "wake_on_lan": have("sendWOLMagicPacket"),
         },
         "methods": methods,

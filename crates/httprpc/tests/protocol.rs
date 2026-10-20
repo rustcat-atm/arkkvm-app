@@ -157,8 +157,12 @@ async fn capabilities_are_derived_from_the_registry_not_remembered() {
     for feature in ["power", "hid", "screen", "media", "wake_on_lan"] {
         assert_eq!(caps["capabilities"][feature], json!(true), "{feature} should be present");
     }
-    // honest about what this device cannot do today: no server-side OCR
-    assert_eq!(caps["capabilities"]["ocr"], json!(false));
+    // This used to assert `false` with a note that the device had no server-side OCR. That
+    // was true when it was written and stopped being true when `screenocr` landed and
+    // /api/screen/ocr was routed -- and because the assertion was never revisited, the test
+    // defended the stale answer instead of catching it. Flags derived from the RPC method
+    // list cannot see HTTP-only features, so they must be reviewed when one is added.
+    assert_eq!(caps["capabilities"]["ocr"], json!(true));
     assert_eq!(caps["transport"]["http"], json!("/api/rpc"));
 }
 
