@@ -50,6 +50,31 @@ implementation would drift the first time somebody fixed a bug in only one of th
 * **Capabilities are derived, never hand-maintained.** A capability table written by hand is
   wrong the moment a method is added, and the client that trusts it calls something absent.
 
+## Errors: two shapes, on purpose
+
+The firmware answers failures with salvo's `StatusError` in 67 places, and the control plane
+mostly does not. That is deliberate, and worth stating so the next person does not "fix" it.
+
+`StatusError` carries a code and two strings. A lease refusal is not a string: it is *who*
+holds the device and *for how long*, and a client that wants to wait, or to decide whether to
+force, needs those as fields. Flattening them into prose and asking callers to parse English
+back out is worse than a second shape.
+
+So:
+
+| surface | shape |
+|---|---|
+| lease endpoints, virtual media | `{"error": "...", ...fields}` — structured, because the fields are the point |
+| the WebRTC offer (`POST /webrtc/session`) | `StatusError`, 409, with a one-sentence brief |
+| the signalling socket | a `leaseRefused` message carrying the structured body |
+| Redfish | whatever Redfish says; it is a standard, not our choice |
+
+⛔ The one thing that is a bug, and was one: nesting a structured refusal *inside* a
+`StatusError` brief. `held_by` arrived as JSON encoded in a string inside JSON, so a client
+had to parse the body twice to find it. `TakeoverError` now carries the document for
+transports that can hold one and a `brief()` sentence for transports that cannot, and each
+caller takes the half it can use.
+
 ## Layout, and why
 
 ```
