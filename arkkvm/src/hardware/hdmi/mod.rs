@@ -763,6 +763,25 @@ fn run_video_stream(
                 }
             };
 
+            // ⛔ DEMAND-DRIVEN FRAME TAP, AND IT MUST STAY THAT WAY.
+            //
+            // This is the only point where a raw YUYV frame is in hand — between dequeue and
+            // requeue — so a server-side screenshot or on-device OCR has to be taken here or
+            // not at all. It is also the hot path: `offer` returns after one relaxed atomic
+            // load unless an HTTP caller has actually asked for a frame, so the steady-state
+            // cost of having this feature is a branch. A KVM that drops frames because
+            // somebody MIGHT want a screenshot has traded away the thing it is.
+            if let Some(b) = buffers.get(buf_index) {
+                unsafe {
+                    crate::screen::offer(
+                        b.mapped_addr as *const u8,
+                        b.length,
+                        width as usize,
+                        height as usize,
+                    );
+                }
+            }
+
             // Send frame to encoder
             if let Some(mb_blk) = buffers.get(buf_index).and_then(|b| b.mb_blk) {
                 let timestamp_us = get_timestamp_us();

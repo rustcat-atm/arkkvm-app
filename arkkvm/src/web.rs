@@ -349,6 +349,11 @@ async fn init_protected_routes() -> anyhow::Result<Router> {
                                                .post(crate::leases::Acquire)
                                                .delete(crate::leases::Release))
         .push(Router::with_path("/api/session/renew").post(crate::leases::Renew))
+        // The screen, server-side. Reading it is non-destructive, so it sits outside the
+        // lease guard: observing a machine must never be the thing that is refused.
+        .push(Router::with_path("/api/screen").get(crate::screen::Status))
+        .push(Router::with_path("/api/screen/ocr").get(crate::screen::Ocr))
+        .push(Router::with_path("/api/screen/ocr/learn").post(crate::screen::Learn))
         // Redfish: power and virtual media only, but it is the one standard here — iDRAC,
         // iLO and Supermicro speak it, so existing BMC tooling works with no driver at all.
         .push(Router::with_path("/redfish/v1").get(redfish::ServiceRoot))

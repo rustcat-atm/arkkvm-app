@@ -169,3 +169,79 @@ files are verified-compiled: a deliberate type error injected into `leases.rs` i
 and removing it returns the check to clean.
 
 ⛔ Still never run on a device, and nothing here has been flashed.
+
+---
+
+# Reading the screen (`crates/screenocr`)
+
+The capability that turns "a KVM you can script" into "a KVM you can script unattended".
+Everything else here lets a machine *drive* the host; this is what lets it *check*. Without
+it, automating firmware is blind keystroke injection — every key is accepted by something,
+just not necessarily the menu you meant, and a wrong boot order produces no error anywhere.
+
+```
+GET  /api/screen                                    is there a picture, and how big
+GET  /api/screen/ocr?x=&y=&w=&h=&expect=TEXT        the screen as text, + whether it matches
+POST /api/screen/ocr/learn                          one calibration step per machine
+```
+
+## ⛔ There was no server-side frame grab at all
+
+The web UI's screenshot is rendered **in the browser** from the WebRTC video track, which is
+why `getSnapshot` appears in the frontend bundle and nowhere in the firmware. The device never
+had a frame in hand, so on-device OCR was not a feature that was missing — it was impossible.
+
+The only place a raw frame exists is between `dequeue_buffer` and requeue in the HDMI capture
+loop. The tap lives exactly there, and is **demand-driven**: `screen::offer` returns after one
+relaxed atomic load unless an HTTP caller has asked for a frame. The steady-state cost of
+having this feature is a branch. A KVM that drops frames because somebody *might* want a
+screenshot has traded away the thing it is.
+
+## No decode, and no OCR engine
+
+Capture hands out **YUYV 4:2:2**, where every even byte is luminance — so a grayscale image is
+already in the buffer and `Gray::from_yuyv` is a stride, not a decode.
+
+Tesseract was never a candidate: RV1106 is one Cortex-A7 with 256MB, most of it claimed by the
+media subsystem. It would also be enormous overkill. **Firmware text is the easiest recognition
+problem there is** — one monospaced bitmap font, two colours, glyphs on an exact grid, no
+rotation, no noise, no antialiasing. Template matching is not a compromise here; it is the
+correct algorithm, and it runs in microseconds.
+
+Design points that are each a way to be wrong:
+
+* **Otsu, not a fixed threshold.** BIOS screens are not uniformly bright — grey on blue, white
+  on black, inverted selection bars — and a constant reads a highlighted row as solid ink.
+* **Polarity is inferred, not configured.** Text is always the minority of pixels, which holds
+  for light-on-dark and dark-on-light alike.
+* ⛔ **A blank cell is a space, never a template.** Learning the space glyph would make every
+  empty cell match it, and the reader would hallucinate text out of an empty screen.
+* ⛔ **Below the confidence floor a cell reads `?`, never a guess.** A guessed character looks
+  like a successful read, and a wrong successful read satisfies a verification step that should
+  have refused. That is worse than no OCR at all.
+* **Confidence excludes blank cells**, or a mostly-empty screen looks highly confident whatever
+  it read.
+* **No signal is an answer, not a hang.** With the host off, no frame ever arrives; the call
+  returns `503` saying so within 2s.
+
+## The honest limitation
+
+A template matcher can only read a font it has templates for, and the built-in atlas is
+**empty**. `POST /api/screen/ocr/learn` builds one from a screen whose text you already know —
+one calibration step per machine, after which that machine's firmware is readable forever.
+
+That is a real cost, stated here rather than discovered later. The alternative — shipping a
+guessed font and silently misreading an unfamiliar one — is worse, for the same reason the
+confidence floor exists.
+
+## Verification
+
+15 tests on a host, against a synthetic font: YUYV extraction, clamped cropping, both
+binarisation polarities, learn/read round trip, spaces, empty screens, unknown glyphs, the
+confidence floor in both directions, and a full frame→crop→binarise→read path from a camera
+buffer.
+
+⛔ Two of those tests exist because the **test harness** was wrong first: the original glyph
+generator produced byte-identical bitmaps for `B` and `S`, so six tests failed and the matcher
+looked broken while reading an ambiguous font exactly as it should. The font is now injective
+by construction and a test guards that property.

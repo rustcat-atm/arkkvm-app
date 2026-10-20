@@ -18,6 +18,7 @@ pub mod leases;
 pub mod module;
 pub mod ota;
 pub mod remote_mount;
+pub mod screen;
 pub mod services;
 pub mod state;
 pub mod terminal;
