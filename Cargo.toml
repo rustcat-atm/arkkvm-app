@@ -1,5 +1,5 @@
 [workspace]
-members = ["arkkvm", "crates/rockchip_mpi_sys", "crates/usb_devices", "crates/common"]
+members = ["arkkvm", "crates/httprpc", "crates/rockchip_mpi_sys", "crates/usb_devices", "crates/common"]
 exclude = ["rust"]
 resolver = "2"
 

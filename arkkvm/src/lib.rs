@@ -12,6 +12,7 @@ pub mod audio;
 pub mod cloud;
 pub mod config;
 pub mod hardware;
+pub mod httprpc_adapter;
 pub mod jsonrpc;
 pub mod module;
 pub mod ota;

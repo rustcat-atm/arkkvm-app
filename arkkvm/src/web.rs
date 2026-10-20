@@ -329,7 +329,14 @@ async fn init_protected_routes() -> anyhow::Result<Router> {
         .push(Router::with_path("/auth/password-local").put(modify_password_local))
         .push(Router::with_path("/auth/local-password").delete(disable_local_password))
         // Storage routes
-        .push(Router::with_path("/storage/upload").post(handle_storage_upload));
+        .push(Router::with_path("/storage/upload").post(handle_storage_upload))
+        // ⛔ The HTTP control plane. Same auth and CSRF hoops as every other protected route,
+        // and the same RPC registry as the WebRTC data channel — a one-shot command should
+        // not require negotiating ICE and decoding H.264 just to ask whether the host is on.
+        .push(Router::with_path("/api/rpc")
+            .post(httprpc::HttpRpc(crate::httprpc_adapter::RegistryDispatch::shared())))
+        .push(Router::with_path("/api/capabilities")
+            .get(httprpc::Capabilities(crate::httprpc_adapter::RegistryDispatch::shared())));
     Ok(router)
 }
 

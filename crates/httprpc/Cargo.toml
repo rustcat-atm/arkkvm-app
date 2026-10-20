@@ -1,0 +1,16 @@
+[package]
+name = "httprpc"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-2.0-or-later"
+description = "JSON-RPC 2.0 over plain HTTP, dispatching into the same registry the WebRTC data channel uses"
+
+[dependencies]
+futures = "0.3"
+salvo = { version = "0.84", features = ["server", "http1"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

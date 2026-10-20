@@ -540,6 +540,16 @@ impl JsonRpcProcessor {
         Self { registry }
     }
 
+    /// The shared registry, so a transport other than the data channel can dispatch the same
+    /// methods.
+    ///
+    /// Deliberately an accessor rather than a second registry: a parallel HTTP registry would
+    /// drift from this one the first time somebody fixed a bug in only one of them, and the
+    /// two transports would quietly disagree about what a method does.
+    pub fn registry(&self) -> &Arc<RpcRegistry> {
+        &self.registry
+    }
+
     /// Handle JSON-RPC message
     pub async fn handle_message(&self, message: DataChannelMessage, channel: Arc<RTCDataChannel>) {
         let request: JsonRpcRequest = match serde_json::from_slice(message.data.as_ref()) {
