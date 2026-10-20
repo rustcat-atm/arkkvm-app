@@ -317,7 +317,8 @@ impl CloudWebSocketClient {
             return Err(e);
         }
 
-        crate::webrtc::handle_session_takeover(app_state.clone(), session.clone())
+        // The relay carries no lease token, so a held device refuses the cloud path too.
+        crate::webrtc::handle_session_takeover(app_state.clone(), session.clone(), None)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to promote cloud WebRTC session: {}", e))?;
 

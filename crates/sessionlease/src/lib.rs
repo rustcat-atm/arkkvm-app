@@ -43,6 +43,21 @@ pub const DEFAULT_TTL_SECS: u64 = 60;
 /// happened to my session", not a log.
 pub const AUDIT_CAPACITY: usize = 64;
 
+/// ⛔ THE TOKEN IS THE AUTHORITY, SO IT MUST BE UNGUESSABLE.
+///
+/// It was `<unix_secs>-<counter>-<len(holder)>`. The counter restarts at 1 each boot and the
+/// holder name is usually public, so a 60-second window was about 480 candidates: anyone could
+/// forge the live token and then renew or release somebody else's hold. Every CAS rule below
+/// rests on this value being secret, so it is now 128 bits from the OS.
+///
+/// On failure we panic rather than degrade. There is no weaker token worth minting, and a
+/// panic here fails closed: the lease is simply not granted.
+fn random_token() -> String {
+    let mut b = [0u8; 16];
+    getrandom::getrandom(&mut b).expect("OS entropy unavailable; refusing to mint a weak lease");
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Lease {
     pub token: String,
@@ -82,12 +97,11 @@ pub struct LeaseManager {
     current: Option<Lease>,
     ttl_secs: u64,
     audit: VecDeque<AuditEntry>,
-    counter: u64,
 }
 
 impl LeaseManager {
     pub fn new(ttl_secs: u64) -> Self {
-        Self { current: None, ttl_secs: ttl_secs.max(1), audit: VecDeque::new(), counter: 0 }
+        Self { current: None, ttl_secs: ttl_secs.max(1), audit: VecDeque::new() }
     }
 
     fn record(&mut self, e: AuditEntry) {
@@ -109,9 +123,8 @@ impl LeaseManager {
     }
 
     fn mint(&mut self, holder: &str, now: u64) -> Lease {
-        self.counter += 1;
         Lease {
-            token: format!("{}-{}-{}", now, self.counter, holder.len()),
+            token: random_token(),
             holder: holder.to_string(),
             acquired_at: now,
             expires_at: now + self.ttl_secs,

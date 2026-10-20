@@ -4,14 +4,13 @@
 //! This file holds the one global, the salvo handlers, and the guard that other HTTP routes
 //! call.
 //!
-//! ⛔ SCOPE, STATED PLAINLY. This lease governs the **HTTP control plane** (`/api/rpc`, the
-//! Redfish surface). It does NOT yet change WebRTC session promotion, which still seizes
-//! unconditionally in `AppState::promote_session_if_registered`. Making the data channel
-//! respect the lease is the right end state and a larger behavioural change to the path every
-//! interactive user takes — it deserves its own step, and one that can be tried on a device.
+//! ⛔ SCOPE. The lease governs the HTTP control plane AND WebRTC session takeover. The check
+//! for the latter lives at `webrtc::handle_session_takeover`, which is the one point all three
+//! seizure paths (HTTP offer, signaling websocket, cloud relay) pass through.
 //!
-//! Stating the boundary rather than implying full coverage: a client that acquires a lease
-//! today is protected from other HTTP callers, not from someone opening the web UI.
+//! Consequence worth stating: while anyone holds a lease, opening the web UI no longer takes
+//! the device. That is what a lease means. The way in is `POST /api/session` with a reason,
+//! which displaces the holder and records who did it.
 
 use std::sync::Arc;
 
@@ -60,9 +59,12 @@ pub async fn may_drive(token: Option<&str>) -> Result<(), Value> {
     }
 }
 
-fn token_of(req: &salvo::Request) -> Option<String> {
+/// ⛔ HEADER ONLY. A `?lease=` fallback used to be accepted, which was fine while the token
+/// was derivable anyway. Now that it is 128 bits of real authority, a query string is the
+/// wrong carrier: URLs end up in proxy and access logs, browser history and `Referer`. The
+/// header costs a client nothing and leaks nowhere.
+pub fn token_of(req: &salvo::Request) -> Option<String> {
     req.header::<String>("x-arkkvm-lease")
-        .or_else(|| req.query::<String>("lease"))
 }
 
 #[derive(Clone)]

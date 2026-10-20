@@ -881,8 +881,23 @@ async fn send_ice_candidate(
 pub async fn handle_session_takeover(
     app_state: std::sync::Arc<crate::state::AppState>,
     new_session: Arc<Session>,
+    lease: Option<&str>,
 ) -> anyhow::Result<()> {
     let new_session_id = new_session.id.clone();
+
+    // ⛔ THE LEASE IS ENFORCED HERE, NOT ON THE ROUTES.
+    //
+    // Three paths reach this function -- the HTTP offer, the signaling websocket, and the
+    // cloud relay -- and each one seizes the device. A hoop on /webrtc/session would have
+    // guarded exactly one of them and read as though it guarded all three. This is the only
+    // place every path must pass, so it is the only place the check belongs; a fourth caller
+    // inherits it by construction.
+    //
+    // Refusing after the offer exchange would strand the session we just built, so close it.
+    if let Err(why) = crate::leases::may_drive(lease).await {
+        remove_and_close_session(&app_state, &new_session_id).await;
+        return Err(anyhow::anyhow!("{why}"));
+    }
     let maybe_old = {
         let _guard = MEDIA_LIFECYCLE_LOCK.lock().await;
         let previous = app_state

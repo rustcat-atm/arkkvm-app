@@ -131,6 +131,10 @@ impl AppState {
     /// Atomically verify and publish an exact session generation while
     /// capturing the exact predecessor generation. Holding the sessions read
     /// lock prevents removal or ID reuse between validation and capture.
+    /// ⛔ NOT THE ENTRY POINT. This is the mechanical half of a takeover and performs no
+    /// lease check. Every real seizure goes through `webrtc::handle_session_takeover`, which
+    /// is where the lease is enforced and which all three paths (HTTP offer, signaling
+    /// websocket, cloud relay) pass through. Calling this directly bypasses that.
     pub async fn promote_session_if_registered(
         &self,
         session: &Arc<Session>,

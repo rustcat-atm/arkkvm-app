@@ -152,3 +152,26 @@ fn the_audit_trail_is_bounded_and_keeps_the_most_recent() {
             "an unbounded in-memory audit trail is a leak on a 256MB device");
     assert!(!m.audit().is_empty());
 }
+
+/// ⛔ The token is the only thing standing between a holder and anyone who wants their device.
+/// The old scheme was `<unix_secs>-<counter>-<len(holder)>`: a 60-second window and a counter
+/// that restarts at 1 each boot put the live token inside a few hundred guesses.
+#[test]
+fn a_lease_token_cannot_be_derived_from_what_an_attacker_knows() {
+    let (now, who) = (1_700_000_000, "orchestrator");
+
+    // Everything the old scheme was built from, which an attacker has.
+    let mut m = mgr();
+    let t = token_of(&m.acquire(who, now, ""));
+    for guess in (now - 60..=now + 60).flat_map(|s| (1..=8).map(move |c| {
+        format!("{}-{}-{}", s, c, who.len())
+    })) {
+        assert_ne!(t, guess, "token is still derivable from time, counter and holder length");
+    }
+
+    // Two managers at the identical instant must not agree — otherwise a reboot replays tokens.
+    let (a, b) = (token_of(&mgr().acquire(who, now, "")), token_of(&mgr().acquire(who, now, "")));
+    assert_ne!(a, b, "same clock and holder produced the same token; it is not random");
+    assert_eq!(t.len(), 32, "expected 128 bits hex-encoded");
+    assert!(t.chars().all(|c| c.is_ascii_hexdigit()));
+}
